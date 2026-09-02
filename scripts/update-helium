@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO="imputnet/helium-linux"
+DEST="$HOME/.local/opt/helium/helium.AppImage"
+
+latest_url="$(
+    curl -fsSL -o /dev/null -w '%{url_effective}' \
+        "https://github.com/${REPO}/releases/latest"
+)"
+latest="${latest_url##*/}"
+
+if [[ -x "$DEST" ]]; then
+    current="$("$DEST" --version 2>/dev/null | awk '{print $2}')"
+else
+    current="none"
+fi
+
+if [[ "$current" == "$latest" ]]; then
+    printf 'Helium is already current: %s\n' "$current"
+    exit 0
+fi
+
+url="https://github.com/${REPO}/releases/download/${latest}/helium-${latest}-x86_64.AppImage"
+tmp="${DEST}.new"
+
+mkdir -p "$(dirname "$DEST")"
+printf 'Updating Helium: %s -> %s\n' "$current" "$latest"
+
+curl --fail --location --progress-bar --output "$tmp" "$url"
+chmod 755 "$tmp"
+
+new_version="$("$tmp" --version 2>/dev/null | awk '{print $2}')"
+if [[ "$new_version" != "$latest" ]]; then
+    rm -f "$tmp"
+    printf 'Downloaded AppImage reports unexpected version: %s\n' "$new_version" >&2
+    exit 1
+fi
+
+mv -f "$tmp" "$DEST"
+printf 'Helium updated successfully to %s\n' "$latest"

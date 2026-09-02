@@ -1,0 +1,11 @@
+[Unit]
+Description=Check for Helium Widevine updates weekly
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=7d
+RandomizedDelaySec=2h
+Persistent=true
+
+[Install]
+WantedBy=timers.target
