@@ -215,6 +215,7 @@ jobs:
             --update \
             --normal-priority \
             --cleanup \
+            --unprivileged \
             --output "$PACKAGE_OUTPUT" \
             stone.yaml
 
