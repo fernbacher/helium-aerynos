@@ -84,8 +84,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          if [[ "$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || true)" == "1" ]]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+
           sudo apt-get update
           sudo apt-get install --yes clang-18 cpio libarchive-tools uidmap
+
           runner_user="$(id --user --name)"
           if ! grep -q "^${runner_user}:" /etc/subuid; then
             sudo usermod --add-subuids 2000000-2065535 "$runner_user"
@@ -93,6 +99,10 @@ jobs:
           if ! grep -q "^${runner_user}:" /etc/subgid; then
             sudo usermod --add-subgids 2000000-2065535 "$runner_user"
           fi
+
+          unshare --user --map-root-user --mount \
+            sh -c 'mount --make-rprivate /'
+
           rustup toolchain install 1.94 --profile minimal
 
       - name: Build pinned moss and boulder
