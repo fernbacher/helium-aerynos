@@ -1,0 +1,54 @@
+# SPDX-FileCopyrightText: 2026 fernbacher
+# SPDX-License-Identifier: MPL-2.0
+
+name        : helium-bin
+version     : "0.16.4.1"
+release     : 1
+homepage    : https://helium.computer/
+upstreams   :
+    - https://github.com/imputnet/helium-linux/releases/download/0.16.4.1/helium-0.16.4.1-x86_64_linux.tar.xz:
+        hash: 683edba74ab8f6ae0ac7272a3c27f9ef945690629e1525370887b17815cedcbe
+    - https://raw.githubusercontent.com/imputnet/helium-linux/0.16.4.1/package/net.imput.helium.metainfo.xml:
+        hash: 82865b62cbb7c81b76e1cca2e399dcc47ca4c1a791fafb89b9baf4686183466e
+        unpack: false
+        rename: net.imput.helium.metainfo.xml
+summary     : Private, fast, and honest web browser
+description : |
+    Helium is a private, fast, and honest Chromium-based web browser.
+    This package repackages Helium's signed upstream Linux binary release.
+license     :
+    - BSD-3-Clause
+    - GPL-3.0-only
+rundeps     :
+    - ca-certificates
+    - liberation-fonts-ttf
+    - vulkan-loader
+    - xdg-utils
+rundeps-exclude:
+    # These shims are optional desktop integrations selected at runtime.
+    - 'soname\(libQt5.*\.so.*\)'
+    - 'soname\(libQt6.*\.so.*\)'
+debug       : false
+strip       : false
+install     : |
+    helium_dir="%(installroot)%(libdir)/helium"
+
+    %install_dir "$helium_dir"
+    cp -a . "$helium_dir/"
+
+    # The upstream profile targets /opt and AerynOS does not ship AppArmor.
+    rm -v "$helium_dir/apparmor.cfg"
+
+    sed -Ei 's/(CHROME_VERSION_EXTRA=).*/\1"AerynOS (moss)"/' \
+        "$helium_dir/helium-wrapper"
+
+    %install_file helium.desktop \
+        "%(installroot)%(datadir)/applications/helium.desktop"
+    %install_file product_logo_256.png \
+        "%(installroot)%(datadir)/icons/hicolor/256x256/apps/helium.png"
+    %install_file "%(sourcedir)/net.imput.helium.metainfo.xml" \
+        "%(installroot)%(datadir)/metainfo/net.imput.helium.metainfo.xml"
+
+    %install_dir "%(installroot)%(bindir)"
+    ln -srv "$helium_dir/helium-wrapper" \
+        "%(installroot)%(bindir)/helium"
