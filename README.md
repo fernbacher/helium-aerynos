@@ -5,14 +5,14 @@ an AerynOS `.stone` package. GitHub Actions checks for a stable Helium release
 daily, builds against AerynOS `stream/unstable`, and publishes a static moss
 repository as assets of the `repository` GitHub Release.
 
-There is no Helium updater installed on the AerynOS machine. Once the package
+There is no separate Helium updater installed on the AerynOS machine you install this on. Once the package
 is installed, the normal system update is the entire client-side update path:
 
 ```bash
 sudo moss sync --update
 ```
 
-`sudo moss sync -u` is the equivalent short form.
+`sudo moss sync -u` is the equivalent short form
 
 ## Repository layout
 
@@ -87,3 +87,9 @@ sudo moss repo remove helium
 
 The browser profile in `~/.config/net.imput.helium` is not package-owned and
 is intentionally left untouched.
+
+## AI-assisted research
+
+AI was used as a research assistant to study AerynOS packaging, `moss`, Boulder, upstream Helium releases, and related repositories. It also helped cross-reference documentation and troubleshoot the publishing workflow.
+
+This project was not assembled by blindly accepting generated code. Every recipe, workflow step, verification measure, and migration procedure was reviewed and tested by the maintainer on a real AerynOS installation. AI assisted the research; the technical decisions, testing, and responsibility remain human.
