@@ -1,6 +1,0 @@
-[Unit]
-Description=Update Helium Widevine CDM
-
-[Service]
-Type=oneshot
-ExecStart=%h/.local/bin/update-helium-widevine
