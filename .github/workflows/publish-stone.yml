@@ -1,0 +1,282 @@
+name: Publish Helium Stone repository
+
+on:
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+    inputs:
+      force_rebuild:
+        description: Rebuild the current Helium release with a new package release
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-helium-stone
+  cancel-in-progress: false
+
+env:
+  HELIUM_REPOSITORY: imputnet/helium-linux
+  REPOSITORY_TAG: repository
+  OS_TOOLS_COMMIT: 1317f874a3b5104c4f44cb17520a328f96ccaa79
+  TOOL_BIN: ${{ github.workspace }}/.aeryn/bin
+  BOULDER_CACHE: ${{ github.workspace }}/.aeryn/cache/boulder
+  BOULDER_CONFIG: ${{ github.workspace }}/.aeryn/config/boulder
+  BOULDER_DATA: ${{ github.workspace }}/.aeryn/data/boulder
+  BOULDER_MOSS_ROOT: ${{ github.workspace }}/.aeryn/moss
+  PACKAGE_OUTPUT: ${{ github.workspace }}/repository-output
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out package repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Decide whether a build is required
+        id: plan
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          upstream_version="$(
+            gh api "repos/${HELIUM_REPOSITORY}/releases/latest" --jq .tag_name
+          )"
+          recipe_version="$(awk '$1 == "version" {gsub(/"/, "", $3); print $3; exit}' stone.yaml)"
+          recipe_release="$(awk '$1 == "release" {print $3; exit}' stone.yaml)"
+          published_version="$(
+            curl -fsSL \
+              "https://github.com/${GITHUB_REPOSITORY}/releases/download/${REPOSITORY_TAG}/repository-version" \
+              2>/dev/null || true
+          )"
+
+          build=false
+          if [[ "$upstream_version" != "$recipe_version" ]] || \
+             [[ "$published_version" != "${recipe_version}-${recipe_release}" ]] || \
+             [[ "${{ inputs.force_rebuild || false }}" == "true" ]]; then
+            build=true
+          fi
+
+          {
+            printf 'upstream_version=%s\n' "$upstream_version"
+            printf 'recipe_version=%s\n' "$recipe_version"
+            printf 'build=%s\n' "$build"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check out pinned AerynOS tools
+        if: steps.plan.outputs.build == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: AerynOS/os-tools
+          ref: ${{ env.OS_TOOLS_COMMIT }}
+          path: .aeryn/os-tools
+          persist-credentials: false
+
+      - name: Install build prerequisites
+        if: steps.plan.outputs.build == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes clang-18 cpio libarchive-tools uidmap
+          runner_user="$(id --user --name)"
+          if ! grep -q "^${runner_user}:" /etc/subuid; then
+            sudo usermod --add-subuids 2000000-2065535 "$runner_user"
+          fi
+          if ! grep -q "^${runner_user}:" /etc/subgid; then
+            sudo usermod --add-subgids 2000000-2065535 "$runner_user"
+          fi
+          rustup toolchain install 1.94 --profile minimal
+
+      - name: Build pinned moss and boulder
+        if: steps.plan.outputs.build == 'true'
+        working-directory: .aeryn/os-tools
+        shell: bash
+        env:
+          CC: clang-18
+          CXX: clang++-18
+        run: |
+          set -euo pipefail
+          rustup override set 1.94
+          cargo build --locked --profile onboarding --package boulder --package moss
+
+          mkdir -p "$TOOL_BIN" "$BOULDER_DATA" "$BOULDER_CONFIG"
+          install -m 0755 target/onboarding/boulder "$TOOL_BIN/boulder"
+          install -m 0755 target/onboarding/moss "$TOOL_BIN/moss"
+          cp -R boulder/data/macros "$BOULDER_DATA/macros"
+
+      - name: Configure the AerynOS unstable build root
+        if: steps.plan.outputs.build == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$TOOL_BIN/boulder" \
+            --cache-dir "$BOULDER_CACHE" \
+            --config-dir "$BOULDER_CONFIG" \
+            --data-dir "$BOULDER_DATA" \
+            --moss-root "$BOULDER_MOSS_ROOT" \
+            profile add \
+            --repo name=unstable,base-uri=https://cdn.aerynos.dev/,channel=main,version=stream/unstable,arch=x86_64,priority=0 \
+            helium-x86_64
+
+      - name: Update recipe
+        if: steps.plan.outputs.build == 'true'
+        id: recipe
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          upstream_version="${{ steps.plan.outputs.upstream_version }}"
+          recipe_version="${{ steps.plan.outputs.recipe_version }}"
+          boulder=(
+            "$TOOL_BIN/boulder"
+            --yes
+            --cache-dir "$BOULDER_CACHE"
+            --config-dir "$BOULDER_CONFIG"
+            --data-dir "$BOULDER_DATA"
+            --moss-root "$BOULDER_MOSS_ROOT"
+          )
+
+          if [[ "$upstream_version" != "$recipe_version" ]]; then
+            "${boulder[@]}" recipe update \
+              --ver "$upstream_version" \
+              --upstream "https://github.com/${HELIUM_REPOSITORY}/releases/download/${upstream_version}/helium-${upstream_version}-x86_64_linux.tar.xz" \
+              --upstream "https://raw.githubusercontent.com/${HELIUM_REPOSITORY}/${upstream_version}/package/net.imput.helium.metainfo.xml" \
+              stone.yaml
+          elif [[ "${{ inputs.force_rebuild || false }}" == "true" ]]; then
+            "${boulder[@]}" recipe bump --recipe stone.yaml
+          fi
+
+          final_version="$(awk '$1 == "version" {gsub(/"/, "", $3); print $3; exit}' stone.yaml)"
+          final_release="$(awk '$1 == "release" {print $3; exit}' stone.yaml)"
+          {
+            printf 'version=%s\n' "$final_version"
+            printf 'release=%s\n' "$final_release"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Verify the signed upstream tarball
+        if: steps.plan.outputs.build == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="${{ steps.recipe.outputs.version }}"
+          tarball="helium-${version}-x86_64_linux.tar.xz"
+          upstream="https://github.com/${HELIUM_REPOSITORY}/releases/download/${version}"
+          verify_dir="$RUNNER_TEMP/helium-verification"
+          gnupg_dir="$RUNNER_TEMP/helium-gnupg"
+          expected_fingerprint="BE677C1989D35EAB2C5F26C9351601AD01D6378E"
+
+          mkdir -p "$verify_dir" "$gnupg_dir"
+          chmod 0700 "$gnupg_dir"
+          curl -fsSL "${upstream}/${tarball}" -o "$verify_dir/$tarball"
+          curl -fsSL "${upstream}/${tarball}.asc" -o "$verify_dir/${tarball}.asc"
+          curl -fsSL \
+            "https://raw.githubusercontent.com/${HELIUM_REPOSITORY}/main/pubkey.asc" \
+            -o "$verify_dir/pubkey.asc"
+
+          actual_fingerprint="$(
+            gpg --batch --show-keys --with-colons "$verify_dir/pubkey.asc" \
+              | awk -F: '$1 == "fpr" {print $10; exit}'
+          )"
+          [[ "$actual_fingerprint" == "$expected_fingerprint" ]]
+
+          gpg --batch --homedir "$gnupg_dir" --import "$verify_dir/pubkey.asc"
+          gpg --batch --homedir "$gnupg_dir" \
+            --verify "$verify_dir/${tarball}.asc" "$verify_dir/$tarball"
+
+          actual_hash="$(sha256sum "$verify_dir/$tarball" | awk '{print $1}')"
+          recipe_hash="$(
+            sed -n '/x86_64_linux\.tar\.xz:/{n;s/^[[:space:]]*hash:[[:space:]]*//p;q}' stone.yaml
+          )"
+          [[ "$actual_hash" == "$recipe_hash" ]]
+
+      - name: Build and validate package
+        if: steps.plan.outputs.build == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$PACKAGE_OUTPUT"
+
+          "$TOOL_BIN/boulder" \
+            --cache-dir "$BOULDER_CACHE" \
+            --config-dir "$BOULDER_CONFIG" \
+            --data-dir "$BOULDER_DATA" \
+            --moss-root "$BOULDER_MOSS_ROOT" \
+            build \
+            --profile helium-x86_64 \
+            --update \
+            --normal-priority \
+            --cleanup \
+            --output "$PACKAGE_OUTPUT" \
+            stone.yaml
+
+          manifest="$PACKAGE_OUTPUT/manifest.x86_64.jsonc"
+          stone="$(find "$PACKAGE_OUTPUT" -maxdepth 1 -type f -name 'helium-bin-*.stone' -print -quit)"
+          [[ -n "$stone" ]]
+          [[ -f "$manifest" ]]
+
+          sed '1d' "$manifest" | jq -e \
+            '.packages["helium-bin"].files | index("/usr/bin/helium") != null' >/dev/null
+          sed '1d' "$manifest" | jq -e \
+            '.packages["helium-bin"].files | index("/usr/lib/helium/helium") != null' >/dev/null
+
+          if sed '1d' "$manifest" | jq -e \
+            '.packages["helium-bin"].depends[]? | select(test("libQt[56]"))' >/dev/null; then
+            echo "Optional Qt shim became a hard runtime dependency" >&2
+            exit 1
+          fi
+
+          "$TOOL_BIN/moss" index "$PACKAGE_OUTPUT"
+
+          (
+            cd "$PACKAGE_OUTPUT"
+            sha256sum "$(basename "$stone")" stone.index > SHA256SUMS
+          )
+          printf '%s-%s\n' \
+            "${{ steps.recipe.outputs.version }}" \
+            "${{ steps.recipe.outputs.release }}" \
+            > "$PACKAGE_OUTPUT/repository-version"
+
+      - name: Commit updated recipe
+        if: steps.plan.outputs.build == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! git diff --quiet -- stone.yaml; then
+            git config user.name github-actions[bot]
+            git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+            git add stone.yaml
+            git commit -m "Update Helium to ${{ steps.recipe.outputs.version }}"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
+
+      - name: Publish repository assets
+        if: steps.plan.outputs.build == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if ! gh release view "$REPOSITORY_TAG" >/dev/null 2>&1; then
+            gh release create "$REPOSITORY_TAG" \
+              --title "Helium moss repository" \
+              --notes "Static moss repository for the AerynOS helium-bin package."
+          fi
+
+          stone="$(find "$PACKAGE_OUTPUT" -maxdepth 1 -type f -name 'helium-bin-*.stone' -print -quit)"
+          gh release upload "$REPOSITORY_TAG" "$stone" --clobber
+          gh release upload "$REPOSITORY_TAG" \
+            "$PACKAGE_OUTPUT/manifest.x86_64.jsonc" \
+            "$PACKAGE_OUTPUT/SHA256SUMS" \
+            "$PACKAGE_OUTPUT/repository-version" \
+            --clobber
+          gh release upload "$REPOSITORY_TAG" \
+            "$PACKAGE_OUTPUT/stone.index" \
+            --clobber
