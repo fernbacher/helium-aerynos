@@ -2,14 +2,14 @@
 # SPDX-License-Identifier: MPL-2.0
 
 name        : helium-bin
-version     : "0.19.3.1"
-release     : 11
+version     : "0.19.4.1"
+release     : 12
 homepage    : https://helium.computer/
 upstreams   :
-    - https://github.com/imputnet/helium-linux/releases/download/0.19.3.1/helium-0.19.3.1-x86_64_linux.tar.xz:
-        hash: 8f4e012b5d921fa59269aaf9c54160abf7294c633b1a6aa5edb7725945314570
-    - https://raw.githubusercontent.com/imputnet/helium-linux/0.19.3.1/package/net.imput.helium.metainfo.xml:
-        hash: f2c82fa95ee8ffdfbaa64dad6214e4b682bfb9cc94c1c590394a3ac169e47444
+    - https://github.com/imputnet/helium-linux/releases/download/0.19.4.1/helium-0.19.4.1-x86_64_linux.tar.xz:
+        hash: 6ca6e4a00fef5916821fb1af8a9607cc6b386f678a7eb422e55f19116ba30469
+    - https://raw.githubusercontent.com/imputnet/helium-linux/0.19.4.1/package/net.imput.helium.metainfo.xml:
+        hash: 66e0677be422536963dad47f0bedbbf46caec13383d33686f8fed3d021b23620
         unpack: false
         rename: net.imput.helium.metainfo.xml
 summary     : Private, fast, and honest web browser
